@@ -1,0 +1,71 @@
+# ───────────────────────────────────────────────────────
+# VisionCart – Docker Compose (Development)
+# ───────────────────────────────────────────────────────
+
+services:
+  # ── Redis ──
+  redis:
+    image: redis:7-alpine
+    container_name: vc-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Backend API (FastAPI) ──
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vc-backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:///./visioncart.db
+      DATABASE_URL_SYNC: sqlite:///./visioncart.db
+      REDIS_URL: redis://redis:6379/0
+      CORS_ORIGINS: http://localhost:3000,http://localhost:8081
+      LOG_LEVEL: info
+      AI_MODEL_PATH: /app/ai-engine/models/
+      FRESHNESS_THRESHOLD: "0.65"
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      GROK_VISION_MODEL: ${GROK_VISION_MODEL:-grok-2-vision-1212}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - ./ai-engine/models:/app/ai-engine/models
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ── Customer Portal (React + Vite) ──
+  customer-portal:
+    build:
+      context: ./customer-portal
+      dockerfile: Dockerfile
+    container_name: vc-customer
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+  # ── MinIO (S3-compatible object storage for dev) ──
+  minio:
+    image: minio/minio:latest
+    container_name: vc-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: visioncart
+      MINIO_ROOT_PASSWORD: visioncart123
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+
+volumes:
+  minio_data:
